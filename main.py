@@ -7,6 +7,7 @@ from astrbot.core.message.components import Image, Plain
 from astrbot.core.config import AstrBotConfig
 import hydrus_api
 
+
 def handle_tags_alias(tags_alias: list) -> dict[str, list]:
     r: dict[str, list] = {}
     for alias in tags_alias:
@@ -18,6 +19,7 @@ def handle_tags_alias(tags_alias: list) -> dict[str, list]:
         elif alias.get("__template_key") == "OR":
             r[alias.get("alias_name")] = [tags]
     return r
+
 
 def handle_exclusive_tags(tags_alias: list) -> dict[str, list]:
     r: dict[str, list] = {}
@@ -73,14 +75,17 @@ class HydrusAPI(Star):
 
     @filter.command("hydrus")
     async def hydrus(self, event: AstrMessageEvent):
-        """调取hydrus的API，返回图片。""" 
+        """调取hydrus的API，返回图片。"""
         tags = event.get_message_str().split(" ")[1:]
         search_tags_pre = []
         for tag in self.config.force_tags + tags:
             tag = tag.strip().lower()
             if not tag:
                 continue
-            for _tag in set([tag, tag[1:] if tag.startswith("-") else "-" + tag] + self.exclusive_tags.get(tag, [])):
+            for _tag in set(
+                [tag, tag[1:] if tag.startswith("-") else "-" + tag]
+                + self.exclusive_tags.get(tag, [])
+            ):
                 if _tag in search_tags_pre:
                     search_tags_pre.remove(_tag)
             search_tags_pre.append(tag)
@@ -99,12 +104,18 @@ class HydrusAPI(Star):
             file_sort_type = 2
             # hydrus_api 是同步库，用 to_thread 避免阻塞事件循环
             # https://hydrusnetwork.github.io/hydrus/developer_api.html#get_files_search_files
-            file_ids = (await asyncio.to_thread(client.search_files, search_tags, file_sort_type=file_sort_type))['file_ids']
+            file_ids = (
+                await asyncio.to_thread(
+                    client.search_files, search_tags, file_sort_type=file_sort_type
+                )
+            )["file_ids"]
             total_files = len(file_ids)
             if total_files == 0:
                 return
             random_file_id = random.choice(file_ids)
-            file_response = await asyncio.to_thread(client.get_file, file_id=random_file_id)
+            file_response = await asyncio.to_thread(
+                client.get_file, file_id=random_file_id
+            )
             file_content = file_response.content
             return file_content
         except Exception as e:
