@@ -1,9 +1,9 @@
 import asyncio
 import random
-from astrbot.api.event import filter, AstrMessageEvent, MessageEventResult
-from astrbot.api.star import Context, Star, register
+from astrbot.api.event import filter, AstrMessageEvent
+from astrbot.api.star import Context, Star
 from astrbot.api import logger
-from astrbot.core.message.components import Image, Plain
+from astrbot.core.message.components import Image
 from astrbot.core.config import AstrBotConfig
 import hydrus_api
 
@@ -72,25 +72,28 @@ class HydrusAPI(Star):
 
     async def initialize(self):
         """可选择实现异步的插件初始化方法，当实例化该插件类之后会自动调用该方法。"""
+        self.client = hydrus_api.Client(self.config.api_key, self.config.hydrus_host)
 
     @filter.command("hydrus")
     async def hydrus(self, event: AstrMessageEvent):
         """调取hydrus的API，返回图片。"""
-        tags = event.get_message_str().split(" ")[1:]
-        search_tags_pre = []
+        tags = event.get_message_str().split()[1:]
+        # 用 dict 保持插入顺序，O(1) 查找与删除，最后按顺序得到列表
+        search_tags_pre: dict[str, None] = {}
         for tag in self.config.force_tags + tags:
             tag = tag.strip().lower()
             if not tag:
                 continue
-            for _tag in set(
-                [tag, tag[1:] if tag.startswith("-") else "-" + tag]
-                + self.exclusive_tags.get(tag, [])
-            ):
-                if _tag in search_tags_pre:
-                    search_tags_pre.remove(_tag)
-            search_tags_pre.append(tag)
+            to_remove = {
+                tag,
+                tag[1:] if tag.startswith("-") else "-" + tag,
+                *self.exclusive_tags.get(tag, []),
+            }
+            for _tag in to_remove:
+                search_tags_pre.pop(_tag, None)
+            search_tags_pre[tag] = None
 
-        search_tags = expand_tags_recursive(search_tags_pre, self.tags_alias)
+        search_tags = expand_tags_recursive(list(search_tags_pre), self.tags_alias)
         logger.debug(f"search tags: {search_tags}")
         file_content = await self.get_random_image(search_tags)
         if file_content is not None:
@@ -100,13 +103,12 @@ class HydrusAPI(Star):
 
     async def get_random_image(self, search_tags: list[str]):
         try:
-            client = hydrus_api.Client(self.config.api_key, self.config.hydrus_host)
             file_sort_type = 2
             # hydrus_api 是同步库，用 to_thread 避免阻塞事件循环
             # https://hydrusnetwork.github.io/hydrus/developer_api.html#get_files_search_files
             file_ids = (
                 await asyncio.to_thread(
-                    client.search_files, search_tags, file_sort_type=file_sort_type
+                    self.client.search_files, search_tags, file_sort_type=file_sort_type
                 )
             )["file_ids"]
             total_files = len(file_ids)
@@ -114,7 +116,7 @@ class HydrusAPI(Star):
                 return
             random_file_id = random.choice(file_ids)
             file_response = await asyncio.to_thread(
-                client.get_file, file_id=random_file_id
+                self.client.get_file, file_id=random_file_id
             )
             file_content = file_response.content
             return file_content
@@ -123,3 +125,4 @@ class HydrusAPI(Star):
 
     async def terminate(self):
         """可选择实现异步的插件销毁方法，当插件被卸载/停用时会调用。"""
+        self.client = None
