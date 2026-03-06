@@ -1,0 +1,60 @@
+{
+  "hydrus_host": {
+    "description": "hydrus host url",
+    "type": "string",
+    "hint": "hydrus API 路由地址， 如： http://127.0.0.1:45869"
+  },
+  "api_key": {
+    "description": "hydrus API key",
+    "type": "string",
+    "hint": "hydrus API key, 从hydrus api服务中获取， 需要有对应权限。"
+  },
+  "tags_alias": {
+    "type": "template_list",
+    "description": "tags 别名和互斥配置",
+    "hint": "tags AND: 且关系的tags组合, tags OR: 或关系的tags组合, tags Exclusive: 互斥关系的tags, 插件默认所有的「-tag」与「tag」都是互斥关系, 互斥关系的tags不能同时出现, 保留最后一个,",
+    "templates": {
+      "AND": {
+        "name": "tags AND",
+        "hint":"「且」关系的tags组合",
+        "items": {
+          "alias_name": {
+            "description": "别名",
+            "type": "string"
+          },
+          "tags": {
+            "type": "list"
+          }
+        }
+      },
+      "OR": {
+        "name": "tags OR",
+        "hint":"「或」关系的tags组合",
+        "items": {
+          "alias_name": {
+            "description": "别名",
+            "type": "string"
+          },
+          "tags": {
+            "type": "list"
+          }
+        }
+      },
+      "exclusive": {
+        "name": "tags Exclusive",
+        "hint": "互斥关系的tags\n",
+        "items": {
+          "tags": {
+            "type": "list"
+          }
+        }
+      }
+    }
+  },
+  "force_tags": {
+    "type": "list",
+    "description": "force tags",
+    "hint": "默认含有的tags， 系统tag参考官方api。https://hydrusnetwork.github.io/hydrus/developer_api.html#get_files_search_files",
+    "default": ["system:archive", "system:filetype = image/jpg, image/png"]
+  }
+}

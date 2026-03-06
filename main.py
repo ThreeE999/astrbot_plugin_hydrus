@@ -1,24 +1,114 @@
+import asyncio
+import random
 from astrbot.api.event import filter, AstrMessageEvent, MessageEventResult
 from astrbot.api.star import Context, Star, register
 from astrbot.api import logger
+from astrbot.core.message.components import Image, Plain
+from astrbot.core.config import AstrBotConfig
+import hydrus_api
 
-@register("helloworld", "YourName", "一个简单的 Hello World 插件", "1.0.0")
-class MyPlugin(Star):
-    def __init__(self, context: Context):
+def handle_tags_alias(tags_alias: list) -> dict[str, list]:
+    r: dict[str, list] = {}
+    for alias in tags_alias:
+        tags = alias.get("tags", [])
+        if alias.get("__template_key") == "exclusive":
+            continue
+        if len(tags) <= 1 or alias.get("__template_key") == "AND":
+            r[alias.get("alias_name")] = tags
+        elif alias.get("__template_key") == "OR":
+            r[alias.get("alias_name")] = [tags]
+    return r
+
+def handle_exclusive_tags(tags_alias: list) -> dict[str, list]:
+    r: dict[str, list] = {}
+    for alias in tags_alias:
+        tags = alias.get("tags", [])
+        if alias.get("__template_key") == "exclusive":
+            for tag in tags:
+                r[tag] = tags
+    return r
+
+
+def expand_tags_recursive(
+    items: list,
+    tags_alias: dict[str, list],
+    seen: set[str] | None = None,
+) -> list:
+    """递归展开别名。AND 展平；OR 保持为 list 一项不展平。别名可嵌套，seen 防环。"""
+    if seen is None:
+        seen = set()
+    result: list = []
+    for item in items:
+        if isinstance(item, list):
+            # OR 结构：保留为 list，只递归展开其内容
+            result.append(expand_tags_recursive(item, tags_alias, seen))
+        elif isinstance(item, str):
+            if item in tags_alias and item not in seen:
+                seen.add(item)
+                try:
+                    value = tags_alias[item]
+                    # OR 类型：value 为 [tags]，保留一层 list
+                    if len(value) == 1 and isinstance(value[0], list):
+                        result.append(expand_tags_recursive(value[0], tags_alias, seen))
+                    else:
+                        result.extend(expand_tags_recursive(value, tags_alias, seen))
+                finally:
+                    seen.discard(item)
+            else:
+                result.append(item)
+        else:
+            result.append(str(item))
+    return result
+
+
+class HydrusAPI(Star):
+    def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
+        self.config = config
+        self.tags_alias = handle_tags_alias(self.config.tags_alias)
+        self.exclusive_tags = handle_exclusive_tags(self.config.tags_alias)
 
     async def initialize(self):
         """可选择实现异步的插件初始化方法，当实例化该插件类之后会自动调用该方法。"""
 
-    # 注册指令的装饰器。指令名为 helloworld。注册成功后，发送 `/helloworld` 就会触发这个指令，并回复 `你好, {user_name}!`
-    @filter.command("helloworld")
-    async def helloworld(self, event: AstrMessageEvent):
-        """这是一个 hello world 指令""" # 这是 handler 的描述，将会被解析方便用户了解插件内容。建议填写。
-        user_name = event.get_sender_name()
-        message_str = event.message_str # 用户发的纯文本消息字符串
-        message_chain = event.get_messages() # 用户所发的消息的消息链 # from astrbot.api.message_components import *
-        logger.info(message_chain)
-        yield event.plain_result(f"Hello, {user_name}, 你发了 {message_str}!") # 发送一条纯文本消息
+    @filter.command("hydrus")
+    async def hydrus(self, event: AstrMessageEvent):
+        """调取hydrus的API，返回图片。""" 
+        tags = event.get_message_str().split(" ")[1:]
+        search_tags_pre = []
+        for tag in self.config.force_tags + tags:
+            tag = tag.strip().lower()
+            if not tag:
+                continue
+            for _tag in set([tag, tag[1:] if tag.startswith("-") else "-" + tag] + self.exclusive_tags.get(tag, [])):
+                if _tag in search_tags_pre:
+                    search_tags_pre.remove(_tag)
+            search_tags_pre.append(tag)
+
+        search_tags = expand_tags_recursive(search_tags_pre, self.tags_alias)
+        logger.debug(f"search tags: {search_tags}")
+        file_content = await self.get_random_image(search_tags)
+        if file_content is not None:
+            yield event.chain_result([Image.fromBytes(file_content)])
+        else:
+            yield event.plain_result("没有找到图片")
+
+    async def get_random_image(self, search_tags: list[str]):
+        try:
+            client = hydrus_api.Client(self.config.api_key, self.config.hydrus_host)
+            file_sort_type = 2
+            # hydrus_api 是同步库，用 to_thread 避免阻塞事件循环
+            # https://hydrusnetwork.github.io/hydrus/developer_api.html#get_files_search_files
+            file_ids = (await asyncio.to_thread(client.search_files, search_tags, file_sort_type=file_sort_type))['file_ids']
+            total_files = len(file_ids)
+            if total_files == 0:
+                return
+            random_file_id = random.choice(file_ids)
+            file_response = await asyncio.to_thread(client.get_file, file_id=random_file_id)
+            file_content = file_response.content
+            return file_content
+        except Exception as e:
+            logger.error(f"search files failed: {str(e)}")
 
     async def terminate(self):
         """可选择实现异步的插件销毁方法，当插件被卸载/停用时会调用。"""
